@@ -1,5 +1,6 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { PenTool } from 'lucide-react';
+import knowledgeBaseService from '../../services/knowledge-base.service';
 
 interface CreatePromptPageProps {
   darkMode: boolean;
@@ -20,6 +21,35 @@ const CreatePromptPage: React.FC<CreatePromptPageProps> = ({
   navigateTo,
   startGenerationProcess
 }) => {
+  const [description, setDescription] = useState('');
+  const [instructions, setInstructions] = useState('');
+  const [creating, setCreating] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!knowledgeName.trim() || !description.trim() || !instructions.trim()) {
+      setError('Veuillez remplir tous les champs');
+      return;
+    }
+
+    setCreating(true);
+    setError(null);
+
+    try {
+      await knowledgeBaseService.createKnowledgeBase({
+        name: knowledgeName,
+        description,
+        instructions
+      });
+      startGenerationProcess();
+    } catch (error) {
+      console.error('Error creating knowledge base:', error);
+      setError('Une erreur est survenue lors de la création de la base de connaissances');
+      setCreating(false);
+    }
+  };
+
   return (
     <div className={`flex-1 p-6 ${darkMode ? 'bg-gray-800' : 'bg-white'} rounded-lg shadow m-4`}>
       <h1 className="text-2xl font-bold mb-6 flex items-center">
@@ -27,29 +57,30 @@ const CreatePromptPage: React.FC<CreatePromptPageProps> = ({
         Créer un prompt maître
       </h1>
       
-      <div className="space-y-6">
+      <form onSubmit={handleSubmit} className="space-y-6">
         <div>
           <label className={`block text-sm font-medium mb-2 ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>
-            Nom du knowledge base
+            Nom de la base de connaissances
           </label>
           <input 
             type="text" 
+            value={knowledgeName}
+            onChange={(e) => setKnowledgeName(e.target.value)}
             className={`w-full px-4 py-2 rounded-md border ${
               darkMode 
                 ? 'bg-gray-700 border-gray-600 text-white' 
                 : 'bg-white border-gray-300 text-gray-900'
-            } focus:outline-none focus:ring-2 focus:ring-indigo-500`}
-            placeholder="Ex: Techniques de génération de données"
-            value={knowledgeName}
-            onChange={(e) => setKnowledgeName(e.target.value)}
+            }`}
           />
         </div>
-        
+
         <div>
           <label className={`block text-sm font-medium mb-2 ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>
             Description
           </label>
-          <textarea 
+          <textarea
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
             className={`w-full px-4 py-2 rounded-md border ${
               darkMode 
                 ? 'bg-gray-700 border-gray-600 text-white' 
@@ -64,6 +95,8 @@ const CreatePromptPage: React.FC<CreatePromptPageProps> = ({
             Instructions spécifiques
           </label>
           <textarea 
+            value={instructions}
+            onChange={(e) => setInstructions(e.target.value)}
             className={`w-full px-4 py-2 rounded-md border ${
               darkMode 
                 ? 'bg-gray-700 border-gray-600 text-white' 
@@ -139,22 +172,27 @@ const CreatePromptPage: React.FC<CreatePromptPageProps> = ({
         
         <div className="flex justify-end space-x-3">
           <button 
+            type="button"
             onClick={() => navigateTo('home')}
             className={`px-4 py-2 rounded-md ${darkMode ? 'bg-gray-700 hover:bg-gray-600 text-white' : 'bg-gray-200 hover:bg-gray-300 text-gray-800'}`}
           >
             Annuler
           </button>
           <button 
-            onClick={() => {
-              navigateTo('home');
-              setTimeout(() => startGenerationProcess(), 500);
-            }}
+            type="submit"
+            disabled={creating}
             className="px-6 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-md"
           >
-            Créer et générer
+            {creating ? 'Création en cours...' : 'Créer et générer'}
           </button>
         </div>
-      </div>
+        
+        {error && (
+          <div className="mt-4 p-3 bg-red-100 text-red-700 rounded-md">
+            {error}
+          </div>
+        )}
+      </form>
     </div>
   );
 };

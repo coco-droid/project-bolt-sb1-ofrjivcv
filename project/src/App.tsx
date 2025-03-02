@@ -3,19 +3,22 @@ import { Bot, Lightbulb, Brain, Send, Paperclip } from 'lucide-react';
 // Import our components
 import Header from './components/Header';
 import Sidebar from './components/Sidebar';
-import NavLink from './components/NavLink';
 import SidebarItem from './components/SidebarItem';
 import MessageItem from './components/MessageItem';
 import HistoryPage from './components/pages/HistoryPage';
 import TrainingEvaluationPage from './components/pages/TrainingEvaluationPage';
 import CreatePromptPage from './components/pages/CreatePromptPage';
 import LoadConversationPage from './components/pages/LoadConversationPage';
-import {createClient} from '@supabase/supabase-js';// Initialize Supabase client
-const supabaseUrl = 'https://supaf.supabase.com';
-const supabaseKey = 'erttr-ret54840';
-const supabase = createClient(supabaseUrl, supabaseKey);
+import Layout from './components/layout/Layout';
+import conversationService, { Message, SendMessageRequest } from './services/conversation.service';
+import knowledgeBaseService from './services/knowledge-base.service';
 
 function App() {
+  // Add missing state
+  const [currentConversationId, setCurrentConversationId] = useState<number | null>(null);
+// Remove duplicate state declaration since it's already defined later in the file
+  
+  // Existing state
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [darkMode, setDarkMode] = useState(false);
   const [expandedMessage, setExpandedMessage] = useState<number | null>(null);
@@ -28,14 +31,11 @@ function App() {
   const [selectedModel, setSelectedModel] = useState('gpt-4-turbo');
   const [secondaryModel, setSecondaryModel] = useState('claude-3-opus');
   const messageContainerRef = useRef<HTMLDivElement>(null);
-  // Add new state for critique mode
   const [critiquingMessage, setCritiquingMessage] = useState<number | null>(null);
   const [critiqueText, setCritiqueText] = useState('');
   
   // Updated message structure to include model information and selection status
-  const [messages, setMessages] = useState([
-    // ... existing messages state
-  ]);
+  const [messages, setMessages] = useState<any[]>([]);
   
   const [newMessage, setNewMessage] = useState('');
   
@@ -132,176 +132,128 @@ function App() {
     setCritiquingMessage(userMessageId);
     setCritiqueText('');
   };
-  
-  const handleSendMessage = (e: React.FormEvent) => {
+  // Modified handleSendMessage to use API
+  const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    // Handle critique mode submission
     if (critiquingMessage !== null) {
-      if (critiqueText.trim() === '') return;
-      
-      // Find the user message being critiqued
-      const userMessageIndex = messages.findIndex(m => m.id === critiquingMessage);
-      if (userMessageIndex === -1) {
+      try {
+        // Check if we have both critique text and suggested message
+        if (!critiqueText.trim() || !suggestedMessage.trim()) {
+          return;
+        }
+        
+        const response = await conversationService.critiqueResponse(critiquingMessage, {
+          critique: critiqueText,
+          suggestion: suggestedMessage
+        });
+        
+        // Add critique and suggestion to messages
+        setMessages(prev => [...prev, {
+          id: response.critiqueId || Date.now(),
+          sender: 'critique',
+          content: critiqueText,
+          relatedTo: critiquingMessage
+        }, {
+          id: response.suggestionId || Date.now() + 1,
+          sender: 'suggestion',
+          content: suggestedMessage,
+          relatedTo: critiquingMessage
+        }]);
+        
         setCritiquingMessage(null);
         setCritiqueText('');
-        return;
+        setSuggestedMessage('');
+      } catch (error) {
+        console.error('Error submitting critique:', error);
       }
-      
-      // Add the critique as a special message
-      const critiqueFeedback = {
-        id: Date.now(),
-        sender: 'critique',
-        content: critiqueText,
-        relatedTo: critiquingMessage
-      };
-      
-      // Add the critique and reset the critique mode
-      setMessages(prev => [
-        ...prev.slice(0, userMessageIndex + 1),
-        critiqueFeedback,
-        ...prev.slice(userMessageIndex + 1)
-      ]);
-      
-      setCritiquingMessage(null);
-      setCritiqueText('');
-      
-      // Generate new responses after the critique
-      setTimeout(() => {
-        const newResponses = [
-          {
-            id: Date.now() + 1,
-            sender: 'ai',
-            model: selectedModel,
-            content: "Voici une réponse améliorée basée sur vos critiques.",
-            reasoning: "J'ai pris en compte vos commentaires sur les réponses précédentes et ajusté mon raisonnement.",
-            selected: false
-          },
-          {
-            id: Date.now() + 2,
-            sender: 'ai',
-            model: secondaryModel,
-            content: "Alternative améliorée suite à vos critiques constructives.",
-            reasoning: "J'ai analysé vos critiques et développé une approche différente qui tient compte de vos préoccupations.",
-            selected: false
-          }
-        ];
-        
-        setMessages(prev => [
-          ...prev,
-          ...newResponses
-        ]);
-      }, 1500);
-      
       return;
     }
     
-    // Normal message handling
-    if (newMessage.trim() === '') return;
+    if (!newMessage.trim()) return;
     
-    const newUserMessage = {
+    const userMessage = {
       id: Date.now(),
       sender: 'user',
-      content: newMessage
+      content: newMessage,
+      timestamp: new Date().toISOString()
     };
     
-    setMessages(prev => [...prev, newUserMessage]);
+    setMessages(prev => [...prev, userMessage]);
     setNewMessage('');
     
-    // Simulate AI response after a short delay
-    setTimeout(() => {
-      const aiResponse1 = {
-        id: Date.now() + 1,
-        sender: 'ai',
-        model: selectedModel,
-        content: `Réponse du modèle ${selectedModel} à votre message: "${newMessage}"`,
-        reasoning: "J'ai analysé votre message et formulé cette réponse en considérant le contexte de la conversation.",
-        selected: false
+    try {
+      const request: SendMessageRequest = {
+        content: newMessage,
+        models: [selectedModel, secondaryModel]
       };
       
-      const aiResponse2 = {
-        id: Date.now() + 2,
-        sender: 'ai',
-        model: secondaryModel,
-        content: `Alternative du modèle ${secondaryModel}: une autre perspective sur votre question.`,
-        reasoning: "J'ai pris une approche différente pour vous offrir une perspective complémentaire.",
-        selected: false
-      };
+      // Create a new conversation if we don't have one
+      if (!currentConversationId) {
+        const conversation = await conversationService.createConversation({
+          title: `Conversation ${new Date().toLocaleString()}`
+        });
+        setCurrentConversationId(conversation.id);
+      }
       
-      setMessages(prev => [...prev, aiResponse1, aiResponse2]);
-    }, 1000);
+      const response = await conversationService.sendMessage(
+        currentConversationId || 1,
+        request
+      );
+      
+      setMessages(prev => [...prev, ...response.responses]);
+    } catch (error) {
+      console.error('Error sending message:', error);
+      setMessages(prev => [...prev, {
+        id: Date.now(),
+        sender: 'system',
+        content: 'Une erreur est survenue lors de la communication avec l\'API.',
+        timestamp: new Date().toISOString()
+      }]);
+    }
   };
-  
-  const startGenerationProcess = () => {
-    setGenerationStage('pattern_extraction');
-    setGenerationProgress(0);
-    
-    // Simulate pattern extraction progress
-    const patternInterval = setInterval(() => {
-      setGenerationProgress(prev => {
-        if (prev >= 100) {
-          clearInterval(patternInterval);
-          setGenerationStage('creating_sentences');
-          setGenerationProgress(0);
-          
-          // Simulate sentence creation progress
-          const sentenceInterval = setInterval(() => {
-            setGenerationProgress(prev => {
-              if (prev >= 100) {
-                clearInterval(sentenceInterval);
-                setGenerationStage('generating_dataset');
-                setSamplesGenerated(0);
-                
-                // Simulate dataset generation
-                const datasetInterval = setInterval(() => {
-                  setSamplesGenerated(prev => {
-                    if (prev >= totalSamples) {
-                      clearInterval(datasetInterval);
-                      
-                      // Add some sample messages after generation is complete
-                      const sampleMessages = [
-                        {
-                          id: Date.now(),
-                          sender: 'user',
-                          content: "Comment puis-je améliorer la qualité des données générées?"
-                        },
-                        {
-                          id: Date.now() + 1,
-                          sender: 'ai',
-                          model: selectedModel,
-                          content: "Pour améliorer la qualité des données générées, vous pouvez utiliser des prompts plus spécifiques avec des contraintes claires et des exemples concrets.",
-                          reasoning: "Les données de haute qualité nécessitent des instructions précises. Les modèles performent mieux avec des exemples et des contraintes bien définies.",
-                          selected: true
-                        },
-                        {
-                          id: Date.now() + 2,
-                          sender: 'ai',
-                          model: secondaryModel,
-                          content: "Je suggère d'implémenter un système de validation en plusieurs étapes et d'utiliser des métriques de qualité pour filtrer les résultats.",
-                          reasoning: "Un processus de validation rigoureux permet d'éliminer les données de faible qualité et d'assurer la cohérence du dataset.",
-                          selected: false
-                        }
-                      ];
-                      
-                      setMessages(sampleMessages);
-                      setGenerationStage(null);
-                      return totalSamples;
-                    }
-                    return prev + 1;
-                  });
-                }, 100);
-                
-                return 100;
-              }
-              return prev + 5;
-            });
-          }, 150);
-          
-          return 100;
-        }
-        return prev + 2;
+  // Modified startGenerationProcess to use API
+  const startGenerationProcess = async () => {
+    try {
+      setGenerationStage('creating');
+      setGenerationProgress(0);
+      
+      const knowledgeBase = await knowledgeBaseService.createKnowledgeBase({
+        name: knowledgeName,
+        description: `Knowledge base for ${knowledgeName}`,
+        instructions: `This knowledge base contains examples related to ${knowledgeName}`
       });
-    }, 100);
+      
+      setGenerationStage('generating');
+      const response = await knowledgeBaseService.generateSamples(
+        knowledgeBase.id,
+        {
+          sampleCount: totalSamples,
+          model: selectedModel
+        }
+      );
+      
+      // Poll for generation status
+      const statusInterval = setInterval(async () => {
+        try {
+          const status = await knowledgeBaseService.getGenerationStatus(response.jobId);
+          setSamplesGenerated(status.samplesGenerated);
+          setGenerationProgress((status.samplesGenerated / status.totalSamples) * 100);
+          
+          if (status.status !== 'processing') {
+            clearInterval(statusInterval);
+            setGenerationStage('completed');
+          }
+        } catch (error) {
+          console.error('Error checking generation status:', error);
+          clearInterval(statusInterval);
+          setGenerationStage('error');
+        }
+      }, 2000);
+    } catch (error) {
+      console.error('Error in generation process:', error);
+      setGenerationStage('error');
+    }
   };
   // Auto-scroll effect with a slight delay to ensure content is rendered
   useEffect(() => {
@@ -349,6 +301,17 @@ function App() {
             } focus:outline-none focus:ring-2 focus:ring-indigo-500 min-h-[100px]`}
           />
           
+          <textarea
+            value={suggestedMessage}
+            onChange={(e) => setSuggestedMessage(e.target.value)}
+            placeholder="Suggérez une réponse améliorée..."
+            className={`w-full py-2 px-4 rounded-lg border ${
+              darkMode 
+                ? 'bg-gray-700 border-gray-600 text-white placeholder-gray-400' 
+                : 'bg-white border-gray-300 text-gray-900 placeholder-gray-500'
+            } focus:outline-none focus:ring-2 focus:ring-indigo-500 min-h-[100px]`}
+          />
+          
           <div className="flex justify-end space-x-2">
             <button 
               type="button"
@@ -368,7 +331,7 @@ function App() {
       );
     }
     
-    // Regular message form
+    // Regular message form remains the same...
     return (
       <form onSubmit={handleSendMessage} className="flex items-center space-x-2">
         <input
@@ -725,7 +688,7 @@ function App() {
       case 'home':
         return renderHomePage();
       case 'training':
-        return <TrainingEvaluationPage darkMode={darkMode} />;
+        return <TrainingEvaluationPage darkMode={darkMode} navigateTo={navigateTo} />;
       case 'history':
         return <HistoryPage darkMode={darkMode} />;
       case 'create_prompt':
